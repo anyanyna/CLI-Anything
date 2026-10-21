@@ -37,30 +37,71 @@ DOMShell is an npm package that exposes Chrome's Accessibility Tree via MCP:
 
 ### Installation
 
+**Requires `@apireno/domshell` 2.0.2 or newer.** The harness uses
+`group_id="new"` to declare lane intent explicitly on the first call of
+each session and reuses the captured lane id on subsequent calls (silences
+the deprecation warning that 2.0.2 added for omitted `group_id`; will
+become a hard error in DOMShell 3.0.0). For direct daemon-mode callers
+without a harness `Session`, the same scheme runs at module level — the
+first call captures a lane id into `_daemon_lane_id` and subsequent calls
+reuse it, preserving browser state across daemon-mode no-session calls
+(see `domshell_backend.py`'s `_daemon_lane_id` declaration for the
+stale-lane failure mode).
+
 ```bash
-# Verify DOMShell is available
-npx @apireno/domshell --version
+npx @apireno/domshell --version   # should report 2.0.2 or higher
 
 # Install Chrome extension
 # https://chromewebstore.google.com/detail/domshell
 ```
 
-### MCP Tools
+The standard `npx @apireno/domshell` invocation pulls the latest published
+version automatically; no manual pinning is required.
 
-DOMShell exposes these MCP tools:
+DOMShell 2.0.0 (May 2026) consolidated the MCP tool surface from 38
+per-command tools to a single `domshell_execute` tool. The harness targets
+this consolidated tool, so no opt-in `--granular` server flag is required.
 
-| Tool | Description | CLI Command |
-|------|-------------|-------------|
-| `domshell_ls` | List directory contents | `fs ls` |
-| `domshell_cd` | Change directory | `fs cd` |
-| `domshell_cat` | Read element content | `fs cat` |
-| `domshell_grep` | Search for pattern | `fs grep` |
-| `domshell_click` | Click element | `act click` |
-| `domshell_type` | Type text | `act type` |
-| `domshell_open` | Navigate to URL | `page open` |
-| `domshell_reload` | Reload page | `page reload` |
-| `domshell_back` | Navigate back | `page back` |
-| `domshell_forward` | Navigate forward | `page forward` |
+### MCP Tool
+
+DOMShell 2.0.2+ exposes a single MCP tool:
+
+| Tool | Description |
+|------|-------------|
+| `domshell_execute` | Runs a shell-style command string. Multi-line input is supported — each line runs in order in the same shell state. |
+
+The harness builds command strings from the public CLI commands. Harness
+absolute paths (leading `/`) are anchored at the tab root via
+`cd %here%` since DOMShell's lane cwd may have drifted; relative paths
+are passed through unchanged. Where correctness depends on shared lane
+state (absolute `ls`/`cat`/`click`, rooted `grep`, absolute `type`), the
+wrapper issues **separate** `domshell_execute` calls (anchor → op → restore)
+with `_is_error` gates between them — not one multi-line string.
+
+| CLI Command (path is absolute) | Calls to `domshell_execute` (split-and-check) |
+|--------------------------------|-----------------------------------------------|
+| `fs ls /<sub>` | 3 calls: `cd %here%/<sub>` → bare `ls` → `cd <restore>` (`_is_error` after anchor) |
+| `fs cd /<sub>` | 1 call: `cd %here%/<sub>` (`cd` is the desired new state; no restore) |
+| `fs cat /<sub>` | 3 calls: `cd %here%` → `cat <sub>` (or bare `read` when `<sub>` is empty/root) → `cd <restore>` |
+| `fs grep <pat>` | 1 call: `grep -r <pat>` (unrooted; operates on lane cwd) |
+| `fs grep <pat> /<sub>` | 3 calls: `cd %here%/<sub>` → `grep -r <pat>` → `cd <restore>` |
+| `fs grep <pat> <sub>` | 3 calls: `cd <sub>` → `grep -r <pat>` → `cd <restore>` (relative to lane cwd) |
+| `act click /<sub>` | 3 calls: `cd %here%` → `click <sub>` → `cd <restore>` |
+| `act type /<sub> <text>` | Up to 4 calls: `cd %here%` → `focus <sub>` → (on focus success) `type <text>` → `cd <restore>` — all share a lane via `group_id` / session |
+| `page open <url>` | 1 call: `open <url>` |
+| `page reload` | 1 call: `refresh` |
+| `page back` | 1 call: `back` |
+| `page forward` | 1 call: `forward` |
+
+Absolute/rooted wrappers use **split-and-check** (separate `_call_execute`
+calls) rather than a single multi-line `domshell_execute` string. That lets
+the harness halt after a failed anchor `cd` before running the operation.
+Non-daemon mode therefore requires a `session` (for lane/`group_id` reuse)
+on those multi-call wrappers.
+
+`<restore>` resolves to `cd %here%/<harness-working-dir>` (or `cd %here%`
+when the harness is at the tab root) so the lane's cwd ends up where
+the harness expects.
 
 ## Key Design Decisions
 

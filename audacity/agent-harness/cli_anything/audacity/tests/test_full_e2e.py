@@ -132,6 +132,19 @@ class TestWavIO:
         corr = np.corrcoef(original[:min_len], loaded[:min_len])[0, 1]
         assert corr > 0.99
 
+    def test_write_read_roundtrip_8bit(self, tmp_dir):
+        # 8-bit WAV PCM is unsigned (0..255, silence == 128). A signed encoder
+        # makes silence (0.0) read back as full-scale (-1.0). Assert every value
+        # round-trips within the 8-bit quantization step (1/128 ~= 0.0078).
+        path = os.path.join(tmp_dir, "rt8.wav")
+        original = [0.0, 0.5, 1.0, -0.5, -1.0, 0.25]
+        write_wav(path, original, 44100, 1, 8)
+        loaded, sr, ch, bd = read_wav(path)
+        assert bd == 8
+        assert len(loaded) == len(original)
+        for o, l in zip(original, loaded):
+            assert abs(o - l) < 0.02, f"{o} -> {l}"
+
     def test_wav_file_properties(self, sine_wav):
         with wave.open(sine_wav, "r") as wf:
             assert wf.getframerate() == 44100
@@ -273,6 +286,40 @@ class TestRenderPipeline:
         result = render_mix(proj, out, preset="wav")
         assert os.path.exists(out)
         assert result["format"] == "WAV"
+        assert result["tracks_rendered"] == 0
+
+    def test_render_tone_without_source_clip(self, tmp_dir):
+        proj = create_project(channels=1)
+        add_track(proj, name="Tone")
+        add_effect(
+            proj,
+            "tone",
+            0,
+            {"frequency": 220.0, "duration": 3.0, "amplitude": 0.5},
+        )
+
+        out = os.path.join(tmp_dir, "tone.wav")
+        result = render_mix(proj, out, preset="wav")
+
+        with wave.open(out, "rb") as wav_file:
+            assert wav_file.getnframes() == 3 * wav_file.getframerate()
+            frames = wav_file.readframes(wav_file.getnframes())
+
+        assert result["duration"] == 3.0
+        assert result["tracks_rendered"] == 1
+        assert any(frames)
+
+    def test_non_generator_effect_on_empty_track_stays_empty(self, tmp_dir):
+        proj = create_project(channels=1)
+        add_track(proj, name="Echo")
+        add_effect(proj, "echo", 0, {"delay_ms": 200.0, "decay": 0.5})
+
+        out = os.path.join(tmp_dir, "empty_with_echo.wav")
+        result = render_mix(proj, out, preset="wav")
+
+        with wave.open(out, "rb") as wav_file:
+            assert wav_file.getnframes() == wav_file.getframerate()
+
         assert result["tracks_rendered"] == 0
 
     def test_render_single_track(self, tmp_dir, sine_wav):
@@ -706,6 +753,26 @@ class TestCLISubprocess:
         result = self._run_cli(["export", "presets"])
         assert result.returncode == 0
         assert "wav" in result.stdout.lower()
+
+    def test_cli_project_mutations_persist_to_disk(self, tmp_dir, sine_wav):
+        project_path = os.path.join(tmp_dir, "persist.json")
+
+        result = self._run_cli(["project", "new", "--name", "Persist", "-o", project_path])
+        assert result.returncode == 0
+        assert os.path.exists(project_path)
+
+        result = self._run_cli(["--project", project_path, "track", "add", "--name", "Music"])
+        assert result.returncode == 0
+        with open(project_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        assert len(payload["tracks"]) == 1
+        assert payload["tracks"][0]["name"] == "Music"
+
+        result = self._run_cli(["--project", project_path, "clip", "add", "0", sine_wav])
+        assert result.returncode == 0
+        with open(project_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        assert len(payload["tracks"][0]["clips"]) == 1
 
 
 # ── True Backend E2E Tests (requires SoX installed) ──────────────

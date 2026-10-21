@@ -3,7 +3,7 @@
 
 Usage:
     # One-shot commands
-    cli-anything-minimax chat --prompt "Hello" --model MiniMax-M2.7
+    cli-anything-minimax chat --prompt "Hello" --model MiniMax-M3
     cli-anything-minimax stream --prompt "Tell me a story"
     cli-anything-minimax tts --text "Hello world" --output hello.mp3
 
@@ -108,7 +108,7 @@ def handle_error(func):
     "model_opt",
     type=str,
     default=None,
-    help="Model ID (default: MiniMax-M2.7)",
+    help="Model ID (default: MiniMax-M3)",
 )
 @click.pass_context
 def cli(ctx, use_json, api_key_opt, model_opt):
@@ -130,7 +130,7 @@ def cli(ctx, use_json, api_key_opt, model_opt):
     "model_opt",
     type=str,
     default=None,
-    help="Model ID (default: MiniMax-M2.7)",
+    help="Model ID (default: MiniMax-M3)",
 )
 @click.option(
     "--temperature",
@@ -145,7 +145,7 @@ def chat(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
     """Chat with the MiniMax API."""
     parent_key = ctx.obj.get("api_key") if ctx.obj else None
     api_key = get_api_key(parent_key)
-    model = model_opt or (ctx.obj.get("model") if ctx.obj else None) or "MiniMax-M2.7"
+    model = model_opt or (ctx.obj.get("model") if ctx.obj else None) or "MiniMax-M3"
 
     session = get_session()
     messages = []
@@ -181,7 +181,7 @@ def chat(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
     "model_opt",
     type=str,
     default=None,
-    help="Model ID (default: MiniMax-M2.7)",
+    help="Model ID (default: MiniMax-M3)",
 )
 @click.option(
     "--temperature",
@@ -196,7 +196,7 @@ def stream(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
     """Stream chat completion from MiniMax."""
     parent_key = ctx.obj.get("api_key") if ctx.obj else None
     api_key = get_api_key(parent_key)
-    model = model_opt or (ctx.obj.get("model") if ctx.obj else None) or "MiniMax-M2.7"
+    model = model_opt or (ctx.obj.get("model") if ctx.obj else None) or "MiniMax-M3"
 
     session = get_session()
     messages = []
@@ -256,9 +256,59 @@ def stream(ctx, prompt, model_opt=None, temperature=None, max_tokens=None):
     show_default=True,
     help="Output audio file path",
 )
+@click.option(
+    "--speed",
+    type=click.FloatRange(0.5, 2.0),
+    default=1.0,
+    show_default=True,
+    help="Speech speed (0.5-2.0).",
+)
+@click.option(
+    "--vol",
+    type=click.FloatRange(0.0, 10.0),
+    default=1.0,
+    show_default=True,
+    help="Volume (0.0-10.0).",
+)
+@click.option(
+    "--pitch",
+    type=click.IntRange(-12, 12),
+    default=0,
+    show_default=True,
+    help="Pitch shift in semitones (-12..12).",
+)
+@click.option(
+    "--sample-rate",
+    type=click.Choice(["8000", "16000", "22050", "24000", "32000", "44100"]),
+    default="32000",
+    show_default=True,
+    help="Audio sample rate.",
+)
+@click.option(
+    "--bitrate",
+    type=click.Choice(["32000", "64000", "128000", "256000"]),
+    default="128000",
+    show_default=True,
+    help="Audio bitrate.",
+)
+@click.option(
+    "--format",
+    "audio_format",
+    type=click.Choice(["mp3", "pcm", "flac"]),
+    default="mp3",
+    show_default=True,
+    help="Output audio format.",
+)
+@click.option(
+    "--channel",
+    type=click.Choice(["1", "2"]),
+    default="1",
+    show_default=True,
+    help="1=mono, 2=stereo.",
+)
 @click.pass_context
 @handle_error
-def tts(ctx, text, model_opt, voice, output_path):
+def tts(ctx, text, model_opt, voice, output_path, speed, vol, pitch, sample_rate, bitrate, audio_format, channel):
     """Synthesize text to speech using MiniMax TTS."""
     parent_key = ctx.obj.get("api_key") if ctx.obj else None
     api_key = get_api_key(parent_key)
@@ -269,6 +319,13 @@ def tts(ctx, text, model_opt, voice, output_path):
         model=model_opt,
         voice=voice,
         output_path=output_path,
+        speed=speed,
+        vol=vol,
+        pitch=pitch,
+        sample_rate=int(sample_rate),
+        bitrate=int(bitrate),
+        audio_format=audio_format,
+        channel=int(channel),
     )
 
     output_data = {
@@ -381,13 +438,13 @@ def config_path():
     "model_opt",
     type=str,
     default=None,
-    help="Chat model ID to test (default: MiniMax-M2.7)",
+    help="Chat model ID to test (default: MiniMax-M3)",
 )
 @handle_error
 def test(model_opt=None):
     """Test MiniMax API connectivity."""
     api_key = get_api_key()
-    model = model_opt or "MiniMax-M2.7"
+    model = model_opt or "MiniMax-M3"
 
     result = chat_completion(
         api_key=api_key,
@@ -449,7 +506,7 @@ def repl():
     pt_session = skin.create_prompt_session()
 
     commands = {
-        "chat --prompt <text>": "Chat with MiniMax (MiniMax-M2.7)",
+        "chat --prompt <text>": "Chat with MiniMax (MiniMax-M3)",
         "stream --prompt <text>": "Stream chat completion",
         "tts --text <text> --output out.mp3": "Text-to-speech synthesis",
         "models": "List chat models",
