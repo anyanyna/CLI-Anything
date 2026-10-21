@@ -28,6 +28,7 @@ def cli(ctx, json_mode, project_path):
     ctx.ensure_object(dict)
     ctx.obj["json_mode"] = json_mode
     ctx.obj["project_path"] = None
+    ctx.obj["modified"] = False
     ctx.obj["session"] = session.get_session()
 
     if project_path:
@@ -40,11 +41,15 @@ def cli(ctx, json_mode, project_path):
 
 @cli.result_callback()
 def _auto_save(result, **kwargs):
-    """Auto-save project after one-shot mutations when --project is used."""
+    """Auto-save project after one-shot mutations when --project is used.
+
+    Read-only commands must not rewrite the project file, so only save when a
+    mutation was recorded via ``_mark``.
+    """
     ctx = click.get_current_context()
     proj_path = ctx.obj.get("project_path")
     sess = ctx.obj.get("session")
-    if proj_path and sess and sess.data is not None:
+    if ctx.obj.get("modified") and proj_path and sess and sess.data is not None:
         sess.save(proj_path)
 
 
@@ -85,7 +90,8 @@ def _get_data(ctx):
 
 
 def _mark(ctx):
-    """Mark session data as changed for undo tracking."""
+    """Mark session data as changed for undo tracking and auto-save."""
+    ctx.obj["modified"] = True
     sess = ctx.obj.get("session")
     if sess:
         sess.mark_changed()
@@ -640,15 +646,15 @@ def diagram_delete(ctx, id):
 
 
 @diagram_group.command("add-table")
-@click.argument("diagram")
-@click.argument("entity")
+@click.argument("diagram_id", metavar="DIAGRAM")
+@click.argument("entity_id", metavar="ENTITY")
 @click.option("--x", type=int, default=100, help="X position")
 @click.option("--y", type=int, default=100, help="Y position")
 @click.pass_context
-def diagram_add_table(ctx, diagram, entity, x, y):
+def diagram_add_table(ctx, diagram_id, entity_id, x, y):
     """Add an entity table to a diagram."""
     data = _get_data(ctx)
-    node = diagram.add_table_to_diagram(data, diagram, entity, x, y)
+    node = diagram.add_table_to_diagram(data, diagram_id, entity_id, x, y)
     _mark(ctx)
     result = {"status": "added", "nodeId": node["id"]}
     out = _j(ctx, result)
@@ -657,18 +663,18 @@ def diagram_add_table(ctx, diagram, entity, x, y):
 
 
 @diagram_group.command("add-relation")
-@click.argument("diagram")
+@click.argument("diagram_id", metavar="DIAGRAM")
 @click.option("--source", "-s", required=True, help="Source entity id")
 @click.option("--target", "-t", required=True, help="Target entity id")
 @click.option("--source-field", required=True, help="Source field defKey")
 @click.option("--target-field", required=True, help="Target field defKey")
 @click.option("--relation", "-r", default="1:n", help="Relation type: 1:n, 1:1, n:m")
 @click.pass_context
-def diagram_add_relation(ctx, diagram, source, target, source_field, target_field, relation):
+def diagram_add_relation(ctx, diagram_id, source, target, source_field, target_field, relation):
     """Add an ER relation between two tables on a diagram."""
     data = _get_data(ctx)
     edge = diagram.add_relation_to_diagram(
-        data, diagram, source, target, source_field, target_field, relation
+        data, diagram_id, source, target, source_field, target_field, relation
     )
     _mark(ctx)
     result = {"status": "added", "edgeId": edge["id"]}

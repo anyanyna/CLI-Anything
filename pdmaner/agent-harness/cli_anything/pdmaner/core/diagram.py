@@ -66,15 +66,26 @@ def add_table_to_diagram(data, diagram_id, entity_id, x=100, y=100):
 
 def add_relation_to_diagram(data, diagram_id, source_entity_id, target_entity_id,
                             source_field, target_field, relation="1:n"):
-    """Add an ER relation edge between two entities."""
+    """Add an ER relation edge between two entities.
+
+    Entity arguments may be either ids or defKeys.
+    """
+    from .entity import get_entity
     dia = get_diagram(data, diagram_id)
     if not dia:
         raise ValueError(f"Diagram not found: {diagram_id}")
 
+    source_entity = get_entity(data, source_entity_id)
+    if not source_entity:
+        raise ValueError(f"Entity not found: {source_entity_id}")
+    target_entity = get_entity(data, target_entity_id)
+    if not target_entity:
+        raise ValueError(f"Entity not found: {target_entity_id}")
+
     cells = dia["canvasData"].get("cells", [])
-    source_node = next((c for c in cells if c.get("originKey") == source_entity_id
+    source_node = next((c for c in cells if c.get("originKey") == source_entity["id"]
                         and c.get("shape") == "table"), None)
-    target_node = next((c for c in cells if c.get("originKey") == target_entity_id
+    target_node = next((c for c in cells if c.get("originKey") == target_entity["id"]
                         and c.get("shape") == "table"), None)
 
     if not source_node:

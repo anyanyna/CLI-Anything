@@ -33,6 +33,7 @@ class TestCLISubprocess:
         return subprocess.run(
             self.CLI_BASE + args,
             capture_output=True, text=True,
+            stdin=subprocess.DEVNULL,
             check=check,
         )
 
@@ -160,6 +161,65 @@ class TestCLISubprocess:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         assert data["status"] == "added"
+
+    def test_diagram_add_table_and_relation(self, tmp_path):
+        path = str(tmp_path / "test.chnr.json")
+        self._run(["--json", "project", "new", "-n", "testdb", "-o", path])
+        self._run(["--json", "--project", path, "entity", "add", "--defkey", "users"])
+        self._run(["--json", "--project", path, "entity", "add", "--defkey", "orders"])
+        self._run(["--json", "--project", path, "entity", "add-field",
+                  "users", "--defkey", "id", "--type", "BIGINT"])
+        self._run(["--json", "--project", path, "entity", "add-field",
+                  "orders", "--defkey", "user_id", "--type", "BIGINT"])
+        added = self._run(["--json", "--project", path, "diagram", "add", "-k", "main"])
+        diagram_id = json.loads(added.stdout)["id"]
+
+        result = self._run(["--json", "--project", path, "diagram", "add-table",
+                           diagram_id, "users"])
+        assert result.returncode == 0
+        assert json.loads(result.stdout)["status"] == "added"
+        self._run(["--json", "--project", path, "diagram", "add-table",
+                  diagram_id, "orders"])
+
+        result = self._run(["--json", "--project", path, "diagram", "add-relation",
+                           diagram_id, "--source", "users", "--target", "orders",
+                           "--source-field", "id", "--target-field", "user_id"])
+        assert result.returncode == 0
+        assert json.loads(result.stdout)["status"] == "added"
+
+        with open(path) as f:
+            saved = json.load(f)
+        assert len(saved["diagrams"][0]["canvasData"]["cells"]) == 3
+
+    def test_read_only_command_does_not_rewrite_project(self, tmp_path):
+        path = str(tmp_path / "test.chnr.json")
+        self._run(["--json", "project", "new", "-n", "testdb", "-o", path])
+
+        with open(path, encoding="utf-8") as f:
+            saved = json.load(f)
+        saved["updatedTime"] = "2000-01-01 00:00:00"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(saved, f, ensure_ascii=False, indent=2)
+
+        with open(path, encoding="utf-8") as f:
+            before = f.read()
+
+        result = self._run(["--json", "--project", path, "entity", "list"])
+        assert result.returncode == 0
+
+        with open(path, encoding="utf-8") as f:
+            after = f.read()
+        assert after == before
+        assert json.loads(after)["updatedTime"] == "2000-01-01 00:00:00"
+
+    def test_mutating_command_still_autosaves(self, tmp_path):
+        path = str(tmp_path / "test.chnr.json")
+        self._run(["--json", "project", "new", "-n", "testdb", "-o", path])
+        self._run(["--json", "--project", path, "entity", "add", "--defkey", "users"])
+
+        with open(path) as f:
+            saved = json.load(f)
+        assert [e["defKey"] for e in saved["entities"]] == ["users"]
 
     def test_full_workflow(self, tmp_path):
         """Full E2E: create project, add entities with fields, export DDL."""

@@ -25,6 +25,7 @@ from cli_anything.pdmaner.core.domain_ import (
 )
 from cli_anything.pdmaner.core.diagram import (
     get_diagrams, add_diagram, delete_diagram, add_table_to_diagram,
+    add_relation_to_diagram,
 )
 from cli_anything.pdmaner.core.view import get_views, add_view, delete_view
 from cli_anything.pdmaner.core.session import Session
@@ -268,6 +269,90 @@ class TestExport:
         assert "users" in content
 
 
+# ── Export Type Mapping Tests ──────────────────────────────────────────
+
+class TestExportDomainMapping:
+    def _project_with_domain(self, apply_for="VARCHAR", domain_len="64"):
+        p = create_project("testdb")
+        add_mapping(p, "VARCHAR", "Variable String", MySQL="VARCHAR", PostgreSQL="VARCHAR")
+        add_mapping(p, "DATETIME", "Date Time", MySQL="DATETIME", PostgreSQL="TIMESTAMP")
+        d = add_domain(p, "user_name", "User Name", apply_for, len_=domain_len)
+        e = add_entity(p, "users")
+        add_field(p, e["id"], "name", "Name", domain=d["id"])
+        return p, d, e
+
+    def test_resolve_field_type_uses_apply_for_key(self):
+        p, d, e = self._project_with_domain(apply_for="DATETIME")
+        field = e["fields"][0]
+        mappings = get_mappings(p)
+        assert _resolve_field_type(field, p["domains"], mappings, "MySQL") == "DATETIME"
+        assert _resolve_field_type(field, p["domains"], mappings, "PostgreSQL") == "TIMESTAMP"
+
+    def test_resolve_field_type_matches_domain_by_defkey(self):
+        p, d, e = self._project_with_domain()
+        e["fields"][0]["domain"] = "user_name"
+        mappings = get_mappings(p)
+        assert _resolve_field_type(e["fields"][0], p["domains"], mappings, "MySQL") == "VARCHAR"
+
+    def test_resolve_field_type_unknown_apply_for_falls_back(self):
+        p, d, e = self._project_with_domain(apply_for="NOT_A_MAPPING")
+        mappings = get_mappings(p)
+        assert _resolve_field_type(e["fields"][0], p["domains"], mappings, "MySQL") == ""
+
+    def test_generate_ddl_uses_domain_mapping_and_len(self):
+        p, d, e = self._project_with_domain(apply_for="VARCHAR", domain_len="40")
+        ddl = generate_ddl(p, "MySQL")[0]
+        assert '"name" VARCHAR(40)' in ddl
+        assert "255" not in ddl
+
+    def test_generate_ddl_selects_correct_db_mapping(self):
+        p, d, e = self._project_with_domain(apply_for="DATETIME")
+        assert '"name" DATETIME' in generate_ddl(p, "MySQL")[0]
+        assert '"name" TIMESTAMP' in generate_ddl(p, "PostgreSQL")[0]
+
+    def _real_pdmaner_project(self):
+        """Build a project using the actual PDManer mapping layout (UUID keys)."""
+        p = create_project("testdb")
+        mysql_id = "29D1CE08-4C35-4D2D-AAA9-23D93305B52E"
+        pg_id = "DFBEC1DD-AA84-456E-BBF3-C95DD0DB2022"
+        string_id = "FC9790A7-36B8-4A48-8F9A-BC1042BCFE64"
+        p["profile"]["dataTypeSupports"] = [
+            {"defKey": "MYSQL", "id": mysql_id},
+            {"defKey": "PostgreSQL", "id": pg_id},
+        ]
+        p["profile"]["default"]["db"] = mysql_id
+        p["dataTypeMapping"]["mappings"] = [
+            {
+                "defKey": "string",
+                "defName": "String",
+                "id": string_id,
+                mysql_id: "VARCHAR",
+                pg_id: "VARCHAR",
+            }
+        ]
+        return p, mysql_id, pg_id, string_id
+
+    def test_generate_ddl_with_real_pdmaner_uuid_mapping(self):
+        p, mysql_id, pg_id, string_id = self._real_pdmaner_project()
+        d = add_domain(p, "IdOrKey", "Id Or Key", applyFor=string_id, len_="32")
+        e = add_entity(p, "users")
+        add_field(p, e["id"], "id", "ID", domain=d["id"])
+
+        # Default DB resolves from profile.default.db (a database id)
+        assert '"id" VARCHAR(32)' in generate_ddl(p)[0]
+        # Explicit defKey and case-insensitive names resolve to the database id
+        assert '"id" VARCHAR(32)' in generate_ddl(p, "PostgreSQL")[0]
+        assert '"id" VARCHAR(32)' in generate_ddl(p, "mysql")[0]
+
+    def test_generate_ddl_uses_field_base_type(self):
+        p, mysql_id, pg_id, string_id = self._real_pdmaner_project()
+        e = add_entity(p, "users")
+        add_field(p, e["id"], "name", "Name")
+        e["fields"][-1]["baseType"] = string_id
+
+        assert '"name" VARCHAR(255)' in generate_ddl(p, "MYSQL")[0]
+
+
 # ── Dict Tests ─────────────────────────────────────────────────────────
 
 class TestDict:
@@ -359,6 +444,21 @@ class TestDiagram:
         assert node["shape"] == "table"
         assert node["originKey"] == e["id"]
         assert len(d["canvasData"]["cells"]) == 1
+
+    def test_add_relation_to_diagram(self):
+        p = create_project("test")
+        users = add_entity(p, "users")
+        orders = add_entity(p, "orders")
+        d = add_diagram(p, "main")
+        add_table_to_diagram(p, d["id"], users["id"])
+        add_table_to_diagram(p, d["id"], orders["id"])
+        edge = add_relation_to_diagram(
+            p, d["id"], users["id"], orders["id"], "id", "user_id"
+        )
+        assert edge["shape"] == "erdRelation"
+        assert edge["source"]["port"] == "id|out"
+        assert edge["target"]["port"] == "user_id|in"
+        assert len(d["canvasData"]["cells"]) == 3
 
     def test_delete_diagram(self):
         p = create_project("test")

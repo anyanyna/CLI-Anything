@@ -4,8 +4,8 @@
 
 | File | Planned Tests | Type |
 |------|--------------|------|
-| `test_core.py` | 25+ | Unit tests (synthetic data) |
-| `test_full_e2e.py` | 15+ | E2E + CLI subprocess tests |
+| `test_core.py` | 59 | Unit tests (synthetic data) |
+| `test_full_e2e.py` | 16 | E2E + CLI subprocess tests |
 
 ## Unit Test Plan
 
@@ -30,6 +30,9 @@
 - `generate_ddl()` — generates correct CREATE TABLE from entities
 - `_format_type()` — correct length/scale for VARCHAR, DECIMAL, etc.
 - `export_sql()` — writes to file
+- Domain resolution — resolves `domain.applyFor` and `field.baseType` against
+  `dataTypeMapping.mappings[].id` / `defKey`, with len/scale fallback
+- Real PDManer project fixture with UUID-based mapping keys
 - Edge: entity without fields, VARCHAR without length
 
 ### `dict_.py`
@@ -71,33 +74,47 @@
 3. `cli-anything-pdmaner --json --project <path> entity list` returns valid JSON
 4. Full pipeline via subprocess: create -> add entity -> add field -> export ddl
 
+### Workflow 5: Diagram Operations
+1. `diagram add-table` accepts a diagram id and entity id without shadowing the module
+2. `diagram add-relation` resolves entity id/defKey before looking up canvas cells
+3. Verify the relation is persisted on the correct diagram
+
+### Workflow 6: Read-Only Commands
+1. Read-only commands (`info`, `list`, `show`, `export`) do not rewrite the project file
+2. Mutating commands still auto-save and update `updatedAt`
+3. Verify file mtime/content is untouched after read-only invocation
+
 ---
 
 ## Test Results
 
 ```
-============================= 64 passed in 6.18s ==============================
+============================= 75 passed in 11.4s ==============================
 
-test_core.py (51 tests):
+test_core.py (59 tests):
   TestProject: 7 passed
   TestEntity: 14 passed
   TestExport: 8 passed
   TestDict: 5 passed
   TestDomain: 4 passed
-  TestDiagram: 3 passed
+  TestDiagram: 4 passed
   TestView: 2 passed
   TestSession: 8 passed
+  TestExportDomainMapping: 7 passed
 
-test_full_e2e.py (13 tests):
-  TestCLISubprocess: 12 passed (help, project_new_json, project_open_and_info,
+test_full_e2e.py (16 tests):
+  TestCLISubprocess: 15 passed (help, project_new_json, project_open_and_info,
     entity_list_empty, entity_add, entity_get, add_field, export_ddl,
-    dict_operations, view_operations, domain_operations, full_workflow)
+    dict_operations, view_operations, domain_operations, full_workflow,
+    diagram_add_table_and_relation, read_only_command_does_not_rewrite_project,
+    mutating_command_still_autosaves)
   TestE2EInMemory: 1 passed (full_workflow_programmatic)
 ```
 
 ### Summary
-- **Total**: 64 tests
+- **Total**: 75 tests
 - **Pass rate**: 100%
-- **Execution time**: ~6.2s
+- **Execution time**: ~11.4s
 - **Coverage**: All core modules tested (project, entity, export, dict, domain, diagram, view, session)
-- **E2E coverage**: Full workflow tested via subprocess (CLI commands with --json output)
+- **E2E coverage**: Full workflow tested via subprocess (CLI commands with --json output),
+  including diagram relations and read-only/mutating save behavior
